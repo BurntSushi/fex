@@ -1,0 +1,19 @@
+name:                fex
+version:             0.1.0.0
+synopsis:            A framework for specifying and executing experiments.
+-- description:         
+homepage:            https://github.com/BurntSushi/fex
+license:             PublicDomain
+license-file:        UNLICENSE
+author:              Andrew Gallant
+maintainer:          jamslam@gmail.com
+-- copyright:           
+category:            Development
+build-type:          Simple
+cabal-version:       >=1.8
+
+library
+  ghc-options: -Wall -Werror -fno-warn-name-shadowing -fno-warn-unused-do-bind
+  exposed-modules:     Development.Fex
+  -- other-modules:       
+  build-depends:       base ==4.6.*
