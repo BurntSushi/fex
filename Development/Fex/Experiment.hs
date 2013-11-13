@@ -1,14 +1,16 @@
 module Development.Fex.Experiment
 where
 
+import Control.Monad (liftM)
 import Data.Monoid (Monoid, mappend, mempty)
 
-newtype Experiment a = Experiment { runExper :: Exper -> IO (a, Exper) }
+newtype Experiment a = Experiment { runExper :: Exper -> IO (IO a, Exper) }
 
 instance Monad Experiment where
-  return a = Experiment $ \e -> return (a, e)
+  return a = Experiment $ \e -> return (return a, e)
   (Experiment e) >>= f = Experiment $ \exper -> do
-                           (a, exper') <- e exper
+                           (io, exper') <- e exper
+                           a <- io
                            runExper (f a) exper'
 
 data Exper = Exper { depends :: [Dependency]
@@ -36,17 +38,18 @@ data Eff
   = EFile String
   deriving Show
 
-dependsExper :: Experiment a -> IO [Dependency]
-dependsExper e = do
-  (_, e') <- runExper e mempty
-  return $ depends e'
-
 evalExper :: Experiment a -> IO a
-evalExper e = runExper e mempty >>= \(a, _) -> return a
+evalExper e = runExper e mempty >>= fst
+
+dependsExper :: Experiment a -> IO [Dependency]
+dependsExper e = liftM (depends . snd) $ runExper e mempty
+
+effectsExper :: Experiment a -> IO [Effect]
+effectsExper e = liftM (effects . snd) $ runExper e mempty
 
 depend :: Dependency -> Experiment ()
-depend d = Experiment $ \e -> return ((), e { depends = d:depends e })
+depend d = Experiment $ \e -> return (return (), e { depends = d:depends e })
 
 effect :: Effect -> Experiment ()
-effect eff = Experiment $ \e -> return ((), e { effects = eff:effects e })
+effect eff = Experiment $ \e -> return (return (), e { effects = eff:effects e })
 
