@@ -16,5 +16,6 @@ library
   ghc-options: -Wall -Werror -fno-warn-name-shadowing -fno-warn-unused-do-bind
   exposed-modules:     Development.Fex
                        Development.Fex.Experiment
+                       Development.Fex.IO
   -- other-modules:       
   build-depends:       base ==4.6.*
