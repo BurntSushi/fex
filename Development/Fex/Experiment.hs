@@ -3,6 +3,7 @@ where
 
 import Control.Monad (liftM)
 import Data.Monoid (Monoid, mappend, mempty)
+import System.IO.Unsafe (unsafeInterleaveIO)
 
 newtype Experiment a = Experiment { runExper :: Exper -> IO (IO a, Exper) }
 
@@ -10,8 +11,16 @@ instance Monad Experiment where
   return a = Experiment $ \e -> return (return a, e)
   (Experiment e) >>= f = Experiment $ \exper -> do
                            (io, exper') <- e exper
-                           a <- io
+                           a <- unsafeInterleaveIO io
                            runExper (f a) exper'
+
+  -- return a >>= f = Exp $ (\e -> return (a, e)) >>= f  [def. return]
+  --                = Exp $ \e' -> runExper (f a) e'     [def. >>=]
+  --                = Exp $ runExper (f a)               [eta]
+  --                = f a
+
+instance Functor Experiment where
+  fmap = liftM
 
 data Exper = Exper { depends :: [Dependency]
                    , effects :: [Effect]
@@ -39,7 +48,9 @@ data Eff
   deriving Show
 
 evalExper :: Experiment a -> IO a
-evalExper e = runExper e mempty >>= fst
+evalExper e = do
+  (io, _) <- runExper e mempty
+  io
 
 dependsExper :: Experiment a -> IO [Dependency]
 dependsExper e = liftM (depends . snd) $ runExper e mempty
