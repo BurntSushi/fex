@@ -9,7 +9,7 @@ import Development.Fex.Experiment
 import Development.Fex.IO
 
 main = do
-  deps <- dependsExper (dummy >> dummy)
+  deps <- dependsExper dummy
   print deps
 
   -- d <- evalExper dummy 
