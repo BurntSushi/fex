@@ -38,6 +38,13 @@ instance Functor Experiment where
 --
 -- Also, after an experiment is executed, all of the effects *must* be
 -- observable.
+--
+-- Dependencies should be specified up front. That is, the set of dependencies
+-- for an experiment (and all of its sub-experiments) must be derivable
+-- independent of an experiment's computation.
+--
+-- I would like a similar restraint for effects, but I'm not sure if it's
+-- possible.
 data Exper = Exper { depends :: [Dependency]
                    , effects :: [Effect]
                    }
