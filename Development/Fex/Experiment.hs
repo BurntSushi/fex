@@ -7,6 +7,12 @@ import System.IO.Unsafe (unsafeInterleaveIO)
 
 -- | The Experiment monad maintains state (dependencies and effects) while
 -- also composing IO computations.
+--
+-- Algebraic laws:
+--
+-- > evalExper e >> evalExper e' = evalExper (e >> e')
+-- > depend d (e >> e') = depend d e >> depend d e' 
+-- > effect eff (e >> e') = effect eff e >> effect eff e' 
 newtype Experiment a = Experiment { runExper :: Exper -> IO (IO a, Exper) }
 
 instance Monad Experiment where
