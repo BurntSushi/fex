@@ -1,9 +1,10 @@
+{-# LANGUAGE MultiParamTypeClasses #-}
 module Development.Fex.Experiment
 where
 
 import Control.Monad (liftM)
+import Data.Maybe (fromJust)
 import Data.Monoid (Monoid, mappend, mempty)
-import System.IO.Unsafe (unsafeInterleaveIO)
 
 -- | The Experiment monad maintains state (dependencies and effects) while
 -- also composing IO computations.
@@ -13,14 +14,15 @@ import System.IO.Unsafe (unsafeInterleaveIO)
 -- > evalExper e >> evalExper e' = evalExper (e >> e')
 -- > depend d (e >> e') = depend d e >> depend d e' 
 -- > effect eff (e >> e') = effect eff e >> effect eff e' 
-newtype Experiment a = Experiment { runExper :: Exper -> IO (IO a, Exper) }
+newtype Experiment a = Experiment { runExper :: Exper -> IO (Maybe a, Exper) }
 
 instance Monad Experiment where
   return a = Experiment $ \e -> return (return a, e)
   (Experiment e) >>= f = Experiment $ \exper -> do
-                           (io, exper') <- e exper
-                           a <- unsafeInterleaveIO io
-                           runExper (f a) exper'
+                           (a, exper') <- e exper
+                           case a of
+                             Just a' -> runExper (f a') exper'
+                             Nothing -> return (Nothing, exper')
 
   -- return a >>= f = Exp $ (\e -> return (a, e)) >>= f  [def. return]
   --                = Exp $ \e' -> runExper (f a) e'     [def. >>=]
@@ -47,17 +49,25 @@ instance Functor Experiment where
 -- possible.
 data Exper = Exper { depends :: [Dependency]
                    , effects :: [Effect]
+                   , eval :: Bool
                    }
              deriving Show
 
 instance Monoid Exper where
-  mempty = Exper { depends = [], effects = [] }
-  (Exper d1 e1) `mappend` (Exper d2 e2) = Exper (d1 ++ d2) (e1 ++ e2)
+  mempty = Exper { depends = [], effects = [], eval = True }
+  ex1 `mappend` ex2 =
+    Exper { depends = depends ex1 ++ depends ex2
+          , effects = effects ex1 ++ effects ex2
+          , eval    = eval ex1
+          }
 
 -- | A Dependency describes something that is necessary in order for an
 -- experiment to complete. It is represented as a description of something
 -- in the environment along with a human readable string describing the
 -- dependency.
+class Show a => Depend a b where
+  depend :: b -> IO (Either String a)
+
 type Dependency = (Dep, String)
 
 data Dep
@@ -81,25 +91,40 @@ data Eff
 -- experiment executes successfully, then all dependencies will have been
 -- satisfied and all effects will have been observed.
 evalExper :: Experiment a -> IO a
-evalExper e = do
-  (io, _) <- runExper e mempty
-  io
+evalExper e = liftM (fromJust . fst) $ runExper e mempty
 
 -- | Returns a list of all dependencies in the given experiment, including
 -- all sub-experiments.
 dependsExper :: Experiment a -> IO [Dependency]
-dependsExper e = liftM (depends . snd) $ runExper e mempty
+dependsExper e = liftM (depends . snd) $ runExper e (mempty { eval = False })
 
 -- | Returns a list of all effects in the given experiment, including
 -- all sub-experiments.
 effectsExper :: Experiment a -> IO [Effect]
-effectsExper e = liftM (effects . snd) $ runExper e mempty
+effectsExper e = liftM (effects . snd) $ runExper e (mempty { eval = False })
 
 -- | Add a dependency to the current experiment.
-depend :: Dependency -> Experiment ()
-depend d = Experiment $ \e -> return (return (), e { depends = d:depends e })
+-- depend :: Dependency -> Experiment () 
+-- depend d = Experiment $ \e -> return (return (), e { depends = d:depends e }) 
+dep :: Depend a b => b -> Experiment a
+dep b = liftIO (depend b) >>= \r ->
+          case r of
+            Left s -> error s
+            Right a -> return a
 
 -- | Add an effect to the current experiment.
 effect :: Effect -> Experiment ()
 effect eff = Experiment $ \e -> return (return (), e { effects = eff:effects e })
+
+liftIO :: IO a -> Experiment a
+liftIO io = Experiment $ \e -> io >>= \a -> return (return a, e)
+
+-- | experIO executes an arbitrary IO computation in the Experiment monad.
+-- (I think this should probably be `liftIO`.)
+experIO :: IO a -> Experiment a
+experIO io = Experiment $ \e ->
+  if not $ eval e then
+    return (Nothing, e)
+  else
+    io >>= \a -> return (return a, e)
 

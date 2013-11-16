@@ -6,12 +6,22 @@ import Data.Monoid
 import qualified System.IO as I
 
 import Development.Fex.Experiment
-import Development.Fex.IO
+import Development.Fex.Depends
+
+test :: Experiment String
+test = do
+  ls <- dep "ls"
+  runExe ls
 
 main = do
-  deps <- dependsExper dummy
-  print deps
-
+  d <- evalExper test
+  print d
+-- main = do 
+  -- d <- evalExper (dep >>= dummy) 
+  -- print d 
+  -- deps <- dependsExper dummy 
+  -- print deps 
+--  
   -- d <- evalExper dummy 
   -- print d 
 
@@ -26,12 +36,12 @@ main = do
   -- I.hPutStrLn handle "test test" 
   -- I.hClose handle 
 
-test1 :: Experiment ()
-test1 = do
-  depend (DExec "ls", "list files")
-  depend (DExec "cat", "cat files")
-  experIO $ print "wAt"
-  depend (DExec "gzip", "compress files")
+-- test1 :: Experiment () 
+-- test1 = do 
+  -- depend (DExec "ls", "list files") 
+  -- depend (DExec "cat", "cat files") 
+  -- experIO $ print "wAt" 
+  -- depend (DExec "gzip", "compress files") 
   -- handle <- openFile "./cauchy" I.ReadMode 
   -- s <- experIO $ I.hGetContents handle 
   -- depend (DExec s, "tricky") 
