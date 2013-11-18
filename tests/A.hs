@@ -2,6 +2,7 @@ module Main where
 
 import Debug.Trace (trace)
 
+import Data.List (intercalate)
 import Data.Monoid
 import qualified System.IO as I
 
@@ -10,12 +11,15 @@ import Development.Fex.Depends
 
 test :: Experiment String
 test = do
-  cat <- dep "catt"
-  ls <- dep "lss"
-  runExe ls
-  runExe cat
+  mkExe "cat" >>= runExe
+  mkExe "ls" >>= runExe
 
 main = do
+  deps <- dependsExper test
+  status <- mapM missing deps
+  putStrLn $ intercalate "\n" $ zipWith (curry dependStatus) deps status
+
+  putStrLn "\n\nRunning experiment..."
   d <- evalExper test
   case d of
     Left err -> putStrLn err
