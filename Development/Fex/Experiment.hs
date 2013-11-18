@@ -1,9 +1,11 @@
-{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE ExistentialQuantification, TypeFamilies #-}
 module Development.Fex.Experiment
 where
 
 import Control.Monad (liftM)
-import Data.Maybe (fromJust)
+import Control.Monad.IO.Class (MonadIO(..))
+import Data.List (intercalate)
+import Data.Maybe (catMaybes, fromJust)
 import Data.Monoid (Monoid, mappend, mempty)
 
 -- | The Experiment monad maintains state (dependencies and effects) while
@@ -31,6 +33,13 @@ instance Monad Experiment where
 
 instance Functor Experiment where
   fmap = liftM
+
+instance MonadIO Experiment where
+  liftIO io = Experiment $ \e ->
+    if not $ eval e then
+      return (Nothing, e)
+    else
+      io >>= \a -> return (return a, e)
 
 -- | Exper represents the state of an experiment. Namely, a list of
 -- dependencies and a list of effects.
@@ -65,18 +74,18 @@ instance Monoid Exper where
 -- experiment to complete. It is represented as a description of something
 -- in the environment along with a human readable string describing the
 -- dependency.
-class Show a => Depend a b where
-  depend :: b -> IO (Either String a)
+class Show a => Depend a where
+  type Args
+  depend :: Args -> Experiment a
+  missing :: a -> IO (Maybe String)
 
-type Dependency = (Dep, String)
+data Dependency = forall a. Depend a => D a
 
-data Dep
-  = DFlag { fshort :: Char, flong :: String, fdefault :: String }
-  | DEnv { ename :: String, edefault :: String }
-  | DExec String
-  | DFile String
-  | DDir String
-  deriving Show
+instance Show Dependency where
+  show (D d) = show d
+
+-- depMap :: Depend a => (a -> b) -> Dependency -> b 
+-- depMap f (D a) = f a 
 
 -- | An Effect describes something that must be observable after an experiment
 -- completes. It is represented as a description of something in the
@@ -90,8 +99,14 @@ data Eff
 -- | Evaluates the experiment by executing it in the IO monad. If the
 -- experiment executes successfully, then all dependencies will have been
 -- satisfied and all effects will have been observed.
-evalExper :: Experiment a -> IO a
-evalExper e = liftM (fromJust . fst) $ runExper e mempty
+evalExper :: Experiment a -> IO (Either String a)
+evalExper e = do
+  deps <- dependsExper e
+  errors <- fmap catMaybes $ mapM (\(D d) -> missing d) deps
+  if null errors then
+    liftM (Right . fromJust . fst) $ runExper e mempty
+  else
+    return $ Left $ intercalate "\n" errors
 
 -- | Returns a list of all dependencies in the given experiment, including
 -- all sub-experiments.
@@ -104,27 +119,17 @@ effectsExper :: Experiment a -> IO [Effect]
 effectsExper e = liftM (effects . snd) $ runExper e (mempty { eval = False })
 
 -- | Add a dependency to the current experiment.
--- depend :: Dependency -> Experiment () 
--- depend d = Experiment $ \e -> return (return (), e { depends = d:depends e }) 
-dep :: Depend a b => b -> Experiment a
-dep b = liftIO (depend b) >>= \r ->
-          case r of
-            Left s -> error s
-            Right a -> return a
+dep :: Depend a => Args -> Experiment a
+dep args = do
+  d <- depend args
+  Experiment $ \e -> return (return d, e { depends = D d:depends e })
 
 -- | Add an effect to the current experiment.
 effect :: Effect -> Experiment ()
 effect eff = Experiment $ \e -> return (return (), e { effects = eff:effects e })
 
-liftIO :: IO a -> Experiment a
-liftIO io = Experiment $ \e -> io >>= \a -> return (return a, e)
-
--- | experIO executes an arbitrary IO computation in the Experiment monad.
--- (I think this should probably be `liftIO`.)
-experIO :: IO a -> Experiment a
-experIO io = Experiment $ \e ->
-  if not $ eval e then
-    return (Nothing, e)
-  else
-    io >>= \a -> return (return a, e)
+-- forceIO is an unsafe variant of liftIO. Namely, it runs an arbitrary
+-- IO computation regardless of whether the experiment is being evaluated.
+forceIO :: IO a -> Experiment a
+forceIO io = Experiment $ \e -> io >>= \a -> return (return a, e)
 

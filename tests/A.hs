@@ -10,12 +10,20 @@ import Development.Fex.Depends
 
 test :: Experiment String
 test = do
-  ls <- dep "ls"
+  cat <- dep "catt"
+  ls <- dep "lss"
   runExe ls
+  runExe cat
 
 main = do
   d <- evalExper test
-  print d
+  case d of
+    Left err -> putStrLn err
+    Right r -> putStrLn r
+
+  -- deps <- dependsExper test 
+  -- print deps 
+
 -- main = do 
   -- d <- evalExper (dep >>= dummy) 
   -- print d 

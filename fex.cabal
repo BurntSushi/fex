@@ -19,4 +19,6 @@ library
                        Development.Fex.Depends
                        Development.Fex.IO
   -- other-modules:       
-  build-depends:       base ==4.6.*
+  build-depends:       base == 4.6.*
+                       , directory == 1.2.*
+                       , transformers == 0.3.0.*
