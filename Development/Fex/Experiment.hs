@@ -101,6 +101,8 @@ instance Monoid Exper where
 -- | A Dependency describes something that is necessary in order for an
 -- experiment to complete. The fundamental property of a dependency is that
 -- it can detect whether it's missing or not.
+--
+-- Note that each dependency *must* have a unique `Show` instance. (Why?)
 class Show a => Depend a where
   missing :: a -> Experiment (Maybe String)
 
