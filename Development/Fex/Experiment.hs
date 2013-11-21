@@ -63,7 +63,7 @@ instance MonadIO Experiment where
 -- In particular, an experiment can run successfully if and only if all of the
 -- given dependencies are satisfied. (DONE.)
 --
--- Also, after an experiment is executed, all of the effects *must* be
+-- Also, after an experiment is executed, all of the effects /must/ be
 -- observable. (TODO.)
 --
 -- Dependencies should be specified up front. That is, the set of dependencies
@@ -102,7 +102,7 @@ instance Monoid Exper where
 -- experiment to complete. The fundamental property of a dependency is that
 -- it can detect whether it's missing or not.
 --
--- Note that each dependency *must* have a unique `Show` instance. (Why?)
+-- Note that each dependency /must/ have a unique `Show` instance. (Why?)
 class Show a => Depend a where
   missing :: a -> Experiment (Maybe String)
 
