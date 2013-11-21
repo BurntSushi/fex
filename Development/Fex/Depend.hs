@@ -11,7 +11,7 @@ where
 
 import System.Directory (findExecutable, doesDirectoryExist, doesFileExist)
 import System.Environment (getEnv, lookupEnv)
-import System.Process (createProcess, proc)
+import System.Process (createProcess, proc, waitForProcess)
 import Text.Printf (printf)
 
 import Development.Fex.Experiment
@@ -93,7 +93,8 @@ mkExe s = mkEnvVar "PATH" >> dep (Exe s)
 -- INCOMPLETE.
 runExe :: [String] -> Exe -> Experiment ()
 runExe args (Exe cmd) = liftIO $ do
-  r <- createProcess (proc cmd args)
+  (_, _, _, h) <- createProcess (proc cmd args)
+  waitForProcess h
   return ()
 
 
