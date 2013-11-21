@@ -13,12 +13,19 @@ build-type:          Simple
 cabal-version:       >=1.8
 
 library
-  ghc-options: -Wall -Werror -fno-warn-name-shadowing -fno-warn-unused-do-bind
+  ghc-options: -Wall -Werror
+               -fno-warn-name-shadowing
+               -fno-warn-unused-do-bind
+               -fno-warn-orphans
   exposed-modules:     Development.Fex
+                       Development.Fex.Base
                        Development.Fex.Experiment
-                       Development.Fex.Depends
-                       Development.Fex.IO
+                       Development.Fex.Flag
+                       Development.Fex.Depend
+                       Development.Fex.DependFlag
   -- other-modules:       
   build-depends:       base == 4.6.*
                        , directory == 1.2.*
+                       , filepath == 1.3.*
                        , transformers == 0.3.0.*
+                       , containers == 0.5.*

@@ -4,23 +4,22 @@ import Debug.Trace (trace)
 
 import Data.List (intercalate)
 import Data.Monoid
+import System.Environment (getArgs)
 import qualified System.IO as I
 
-import Development.Fex.Experiment
-import Development.Fex.Depends
+import Development.Fex
+import Tests.PDB
 
 test :: Experiment String
 test = do
-  mkExe "cat" >>= runExe
-  mkExe "ls" >>= runExe
+  entry <- mkPDB >>= pdbPath "1ctf"
+  liftIO $ print entry 
+  mkExe "cat" >>= runExe []
+  mkExe "ls" >>= runExe []
 
 main = do
-  deps <- dependsExper test
-  status <- mapM missing deps
-  putStrLn $ intercalate "\n" $ zipWith (curry dependStatus) deps status
-
-  putStrLn "\n\nRunning experiment..."
-  d <- evalExper test
+  args <- getArgs
+  d <- evalExper args $ baseExper test
   case d of
     Left err -> putStrLn err
     Right r -> putStrLn r
