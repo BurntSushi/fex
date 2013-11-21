@@ -12,10 +12,12 @@ import Tests.PDB
 
 test :: Experiment String
 test = do
-  entry <- mkPDB >>= pdbPath "1ctf"
-  liftIO $ print entry 
-  mkExe "cat" >>= runExe []
-  mkExe "ls" >>= runExe []
+  setName "test"
+  cached ["cauchy"] (do
+    setName "inside-test"
+    liftIO $ I.openFile "cauchyy" I.WriteMode
+    liftIO (print "executing experiment"))
+  return "hi"
 
 main = do
   args <- getArgs

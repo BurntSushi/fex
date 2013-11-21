@@ -19,10 +19,10 @@ library
                -fno-warn-orphans
   exposed-modules:     Development.Fex
                        Development.Fex.Base
+                       Development.Fex.Combinators
                        Development.Fex.Experiment
                        Development.Fex.Flag
                        Development.Fex.Depend
-                       Development.Fex.DependFlag
   -- other-modules:       
   build-depends:       base == 4.6.*
                        , directory == 1.2.*

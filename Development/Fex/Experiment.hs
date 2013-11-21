@@ -6,6 +6,8 @@ module Development.Fex.Experiment
   , flagsExper, addFlag, flagValue
   , evalExper
   , liftIO
+  , experFail
+  , setName, getName
   )
 where
 
@@ -28,13 +30,15 @@ import qualified Development.Fex.Flag as F
 -- > evalExper args e >> evalExper args e' = evalExper args (e >> e')
 -- > depend d (e >> e') = depend d e >> depend d e' 
 -- > effect eff (e >> e') = effect eff e >> effect eff e' 
-newtype Experiment a = Experiment { runExper :: Exper -> IO (a, Exper) }
+newtype Experiment a = Experiment { runExper :: Exper -> IO (Either String (a, Exper)) }
 
 instance Monad Experiment where
-  return a = Experiment $ \e -> return (a, e)
+  return a = Experiment $ \e -> return $ Right (a, e)
   (Experiment e) >>= f = Experiment $ \exper -> do
-                           (a, exper') <- e exper
-                           runExper (f a) exper'
+                           r <- e exper
+                           case r of
+                             Left err -> return $ Left err
+                             Right (a, exper') -> runExper (f a) exper'
 
 instance Functor Experiment where
   fmap = liftM
@@ -46,8 +50,17 @@ instance MonadIO Experiment where
   -- It'd be ideal to have two distinct IO combinators: one for use when
   -- specifying dependencies and one for use when running experiments.
   -- But I don't know how to tie it together.
-  liftIO io = Experiment $ \e -> do { a <- io' e; return (a, e) }
+  liftIO io = Experiment $ \e -> do { a <- io' e; return $ Right (a, e) }
     where io' e = if not (eval e) then unsafeInterleaveIO io else io
+
+-- | Fails the current experiment.
+-- As of now, this is pretty much useless, since the type is fixed at unit.
+experFail :: String -> Experiment ()
+experFail msg = Experiment $ \e -> do
+  if not (eval e)
+    then return $ Right ((), e)
+    else return $ Left msg
+
 
 -- forceIO is an unsafe variant of liftIO. Namely, it runs an arbitrary
 -- IO computation regardless of whether the experiment is being evaluated.
@@ -72,7 +85,8 @@ instance MonadIO Experiment where
 -- guarantee does not hold.
 --
 -- Similarly for effects.
-data Exper = Exper { depends :: [Dependency]
+data Exper = Exper { name :: String
+                   , depends :: [Dependency]
                    , effects :: [Effect]
                    , eval :: Bool -- false when querying dependencies/effects
                    , flagSpec :: F.Flags
@@ -84,14 +98,16 @@ instance Show Exper where
     printf "Dependencies: %s\nEffects: %s" (show ds) (show efs)
 
 instance Monoid Exper where
-  mempty = Exper { depends = []
+  mempty = Exper { name = "UNNAMED"
+                 , depends = []
                  , effects = []
                  , eval = True
                  , flagSpec = F.emptyFlags
                  , flagVals = F.emptyConfig
                  }
   ex1 `mappend` ex2 =
-    Exper { depends = depends ex2 ++ depends ex1
+    Exper { name = name ex1
+          , depends = depends ex2 ++ depends ex1
           , effects = effects ex2 ++ effects ex1
           , eval    = eval ex1
           , flagSpec = F.appendFlags (flagSpec ex2) (flagSpec ex1)
@@ -144,7 +160,10 @@ evalExper args e = do
   status <- resolve e args deps
   let errors = filter (isJust . snd) $ zip deps status
   if null errors
-    then liftM (Right . fst) $ runExper e (mempty { flagVals = conf })
+    then do r <- runExper e (mempty { flagVals = conf })
+            case r of
+              Left err -> error err
+              Right (r', _) -> return $ Right r'
     else return $ Left $ intercalate "\n" $ map dependStatus errors
 
 -- | An empty experiment with no evaluation context.
@@ -160,17 +179,24 @@ resolve :: Experiment a -> [String] -> [Dependency] -> IO [Maybe String]
 resolve e args d = do
   flags <- flagsExper e
   conf <- F.configIO flags args
-  liftM fst $ runExper (mapM missing d) 
-                       (mempty { flagSpec = flags, flagVals = conf })
+  r <- runExper (mapM missing d) (mempty { flagSpec = flags, flagVals = conf })
+  case r of
+    Left err -> error err
+    Right (r', _) -> return r'
+
+-- kill me.
+right :: Either String b -> b
+right (Right b) = b
+right (Left err) = error $ printf "BUG with Either: %s" err
 
 -- | Returns a list of all dependencies in the given experiment, including
 -- all sub-experiments. No experiments will be evaluated.
 dependsExper :: Experiment a -> IO [Dependency]
-dependsExper e = liftM (nub . reverse . depends . snd) $ runExper e noEval
+dependsExper e = liftM (nub . reverse . depends . snd . right) $ runExper e noEval
 
 -- | Add a dependency to the current experiment.
 dep :: Depend a => a -> Experiment a
-dep a = Experiment $ \e -> return (a, e { depends = D a:depends e })
+dep a = Experiment $ \e -> return (Right (a, e { depends = D a:depends e }))
 
 -- | Convert a dependency and its status to a human readable string.
 dependStatus :: (Dependency, Maybe String) -> String
@@ -181,21 +207,29 @@ dependStatus (d, Just err) = show d ++ " ... Not found!\n" ++ indent err
 -- | Returns a list of all effects in the given experiment, including
 -- all sub-experiments. No experiments will be evaluated.
 effectsExper :: Experiment a -> IO [Effect]
-effectsExper e = liftM (nub . reverse . effects . snd) $ runExper e noEval
+effectsExper e = liftM (nub . reverse . effects . snd . right) $ runExper e noEval
 
 -- | Add an effect to the current experiment.
 effect :: Effect -> Experiment ()
-effect eff = Experiment $ \e -> return ((), e { effects = eff:effects e })
+effect eff = Experiment $ \e -> return (Right ((), e { effects = eff:effects e }))
 
 -- | Returns the experiment's command line flag specification.
 -- No experiments will be evaluated.
 flagsExper :: Experiment a -> IO F.Flags
-flagsExper e = liftM (flagSpec . snd) $ runExper e noEval
+flagsExper e = liftM (flagSpec . snd . right) $ runExper e noEval
 
 -- | Adds a flag specification to the experiment.
 addFlag :: F.FlagSpec -> Experiment ()
 addFlag spec = Experiment $ \e ->
-                 return ((), e { flagSpec = F.addFlag spec (flagSpec e) })
+                 return (Right ((), e { flagSpec = F.addFlag spec (flagSpec e) }))
+
+-- | Sets the name of this experiment and any unnamed sub-experiments.
+setName :: String -> Experiment ()
+setName s = Experiment $ \e -> return (Right ((), e { name = s }))
+
+-- | Gets the name of the current experiment.
+getName :: Experiment String
+getName = Experiment $ \e -> return (Right (name e, e))
 
 -- | Retrieves a flag value given its long form name from the current
 -- experiment. If the given name cannot be found, then the flag specification
@@ -206,9 +240,9 @@ flagValue :: String -> Experiment F.FlagV
 flagValue k =
   Experiment $ \e ->
     case F.confLookup k (flagVals e) of
-      Just flagv  -> return (flagv, e)
+      Just flagv  -> return $ Right (flagv, e)
       Nothing -> -- degrade to default value
         case F.flagLookup k (flagSpec e) of
-          Just spec -> return (F.defv spec, e)
+          Just spec -> return $ Right (F.defv spec, e)
           Nothing -> error $ printf "BUG: Could not find flag '%s'" k
 
