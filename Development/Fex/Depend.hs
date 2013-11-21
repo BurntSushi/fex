@@ -94,6 +94,7 @@ mkExe s = mkEnvVar "PATH" >> dep (Exe s)
 runExe :: [String] -> Exe -> Experiment ()
 runExe args (Exe cmd) = liftIO $ do
   r <- createProcess (proc cmd args)
+  print "wat"
   return ()
 
 
