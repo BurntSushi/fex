@@ -70,7 +70,7 @@ cut = do
   dists <- getDists
   tree <- getTree
   mkExe "mattbench-cluster"
-    >>= cached path runExe ["-threshold", show threshold, dists, tree, path]
+    >>= runExe ["-threshold", show threshold, dists, tree, path]
   return path
 
 main = do
