@@ -1,0 +1,81 @@
+#!/usr/bin/env runhaskell
+
+-- Outline of experiment:
+--
+-- 1. Cut the mattbench tree at the threshold specified and store the clusters
+--    in a tmp directory (csv file).
+--
+-- 2. Repeat {iters} times:
+--      Select 2 random proteins from each cluster with 2 or more proteins.
+--      For each protein, find the nearest neighbor in Fragbag space.
+--      Correct if and only if neighbor matches protein in same cluster.
+--
+-- 3. Report mean and total accuracy.
+
+import System.Environment (getArgs)
+import System.Directory (createDirectoryIfMissing)
+import qualified System.IO as I
+import System.FilePath (joinPath)
+import Text.Printf (printf)
+
+import Development.Fex
+
+import Tests.FragLib
+import Tests.SCOP
+
+getTmpDir :: Experiment String
+getTmpDir = do
+  name <- getName
+  flag <- mkFlagString "tmp" (printf "/tmp/fex/%s" name)
+                       "A directory to store intermediate files."
+  p <- runFlagString flag
+  liftIO $ createDirectoryIfMissing True p
+  return p
+
+getThreshold :: Experiment Double
+getThreshold = do
+  flag <- mkFlagDouble "threshold" 0.097702
+                       "A directory to store intermediate files."
+  runFlagDouble flag
+
+getDists :: Experiment String
+getDists = do
+  flag <- mkFlagFile "dists" "/data/bio/mattbench/astral.gob"
+                     "Mattbench alignment distances."
+  runFlagFile flag
+
+getTree :: Experiment String
+getTree = do
+  flag <- mkFlagFile "tree" "/data/bio/mattbench/dendrogram.tree"
+                     "The dendrogram in Newick tree format."
+  runFlagFile flag
+
+experiment :: Experiment String
+experiment = do
+  setName "mattbench-fragbag"
+  libType <- getLibraryType
+  scop <- mkSCOP libType
+  protein <- scopPath "d1rtea_" scop
+  liftIO $ print protein
+  
+  cutted <- cut
+  return cutted
+
+cut :: Experiment String
+cut = do
+  tmp <- getTmpDir
+  threshold <- getThreshold
+  let path = joinPath [tmp, printf "%f.csv" threshold]
+  dists <- getDists
+  tree <- getTree
+  mkExe "mattbench-cluster"
+    >>= runExe ["-threshold", show threshold, dists, tree, path]
+  return path
+
+main = do
+  args <- getArgs
+  result <- evalExper args $ baseExper experiment
+  case result of
+    Left err -> I.hPutStrLn I.stderr err
+    Right r -> putStrLn r
+

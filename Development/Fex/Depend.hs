@@ -11,6 +11,7 @@ where
 
 import System.Directory (findExecutable, doesDirectoryExist, doesFileExist)
 import System.Environment (getEnv, lookupEnv)
+import System.Process (createProcess, proc)
 import Text.Printf (printf)
 
 import Development.Fex.Experiment
@@ -90,10 +91,10 @@ mkExe s = mkEnvVar "PATH" >> dep (Exe s)
 -- | Run an executable in the current environment.
 --
 -- INCOMPLETE.
-runExe :: [String] -> Exe -> Experiment String
-runExe _ (Exe cmd) = liftIO $ do
-  printf "Running command '%s'...\n" cmd
-  return $ "result of '" ++ cmd ++ "'"
+runExe :: [String] -> Exe -> Experiment ()
+runExe args (Exe cmd) = liftIO $ do
+  createProcess (proc cmd args)
+  return ()
 
 
 -- Flag dependencies
