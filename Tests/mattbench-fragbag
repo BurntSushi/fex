@@ -69,6 +69,7 @@ cut = do
   let path = joinPath [tmp, printf "%f.csv" threshold]
   dists <- getDists
   tree <- getTree
+  mkExe "touch" >>= runExe ["wat", "watwat"]
   mkExe "mattbench-cluster"
     >>= runExe ["-threshold", show threshold, dists, tree, path]
   return path
