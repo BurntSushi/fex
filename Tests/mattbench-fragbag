@@ -63,6 +63,7 @@ experiment = do
 
 cut :: Experiment String
 cut = do
+  setName "cluster mattbench dendrogram"
   tmp <- getTmpDir
   threshold <- getThreshold
   let path = joinPath [tmp, printf "%f.csv" threshold]

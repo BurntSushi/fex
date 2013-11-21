@@ -93,7 +93,7 @@ mkExe s = mkEnvVar "PATH" >> dep (Exe s)
 -- INCOMPLETE.
 runExe :: [String] -> Exe -> Experiment ()
 runExe args (Exe cmd) = liftIO $ do
-  createProcess (proc cmd args)
+  r <- createProcess (proc cmd args)
   return ()
 
 
