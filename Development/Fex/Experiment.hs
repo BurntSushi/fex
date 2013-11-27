@@ -125,6 +125,8 @@ class Show a => Depend a where
 -- | A container for holding any value that satisfies the `Depend` constraint.
 data Dependency = forall a. Depend a => D a
 
+
+
 instance Eq Dependency where
   (D d1) == (D d2) = show d1 == show d2
 

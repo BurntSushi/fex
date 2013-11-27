@@ -1,7 +1,6 @@
 module Development.FexG.Experiment
 where
 
-import Control.Monad (liftM2)
 import System.Environment (getEnv)
 import System.IO.Unsafe (unsafePerformIO)
 import System.Process (readProcess)
