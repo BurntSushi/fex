@@ -33,3 +33,4 @@ library
                        , transformers == 0.3.0.*
                        , containers == 0.5.*
                        , process == 1.1.0.*
+                       , mtl == 2.1.*

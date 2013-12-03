@@ -1,59 +1,103 @@
+{-# LANGUAGE FlexibleContexts, FlexibleInstances, Rank2Types, TypeSynonymInstances #-}
 module Development.FexA.Experiment
+  (
+
+  -- * The Fex language
+    Fex
+  , Value
+  , bool, int, double, str
+  , var, app, lam
+
+  -- * Evaluating a Fex term
+  , EvalContext
+  , Pure
+  , evalIO
+
+  -- * Dependencies
+  , Dependency
+  , readEnvVar, runExe
+
+  -- * Dependency analysis
+  , DepTree, depTree, staticDeps, showStatic
+  )
 where
 
+import Control.Monad.Identity (Identity, runIdentity)
 import Data.List (intercalate)
 import System.Environment (getEnv)
 import System.Process (readProcess)
 import Text.Printf (PrintfArg, printf)
 
-data Expr = Lit Value
-          | Var Var
-          | Dep Dependency
-          | App Expr Expr
-          | Lam Expr
-          deriving Show
+data Fex m = Lit (RawValue m)
+            | Var Var
+            | Dep (Dependency m)
+            | App (Fex m) (Fex m)
+            | Lam (Fex m)
+            deriving Show
 
 data Var = VZ | VS Var deriving Show
 
-type Env = [Value]
+type Env m = [RawValue m]
 
-data Value = Bool Bool
-           | Int Int
-           | Double Double
-           | String String
-           | Closure (Value -> IO Value)
+data RawValue m = Bool Bool
+                | Int Int
+                | Double Double
+                | String String
+                | Closure (RawValue m -> m (RawValue m))
 
-instance Show Value where
+type Pure = Identity
+
+type Value = RawValue IO
+
+instance Show (RawValue m) where
   show (Bool b) = show b
   show (Int n) = show n
   show (Double d) = show d
   show (String s) = s
   show (Closure _) = "<closure>"
 
-data Dependency = ReadEnvVar Expr
-                | RunExe { exe :: Expr, args :: [Expr] }
-                deriving Show
+data Dependency m = ReadEnvVar (Fex m)
+                  | RunExe (Fex m) [Fex m]
+                  deriving Show
+
+class Monad m => EvalContext m where
+  -- | Evaluates a dependency in a particular context.
+  deval :: Dependency m -- ^ The dependency to evaluate.
+        -> (Fex m -> m (RawValue m)) -- ^ An evaluation environment.
+        -> m (RawValue m) -- ^ The result of evaluating a dependency.
+
+instance EvalContext Pure where
+  deval d _ = errf "Dependency can't be evaluated in pure context: %s" (show d)
+
+instance EvalContext IO where
+  deval (ReadEnvVar e) ev = ev e >>= \e -> fmap String $ getEnv $ valueToStr e
+  deval (RunExe exe args) ev = do
+    exe' <- fmap valueToStr $ ev exe
+    args' <- fmap (map valueToStr) $ mapM ev args
+    fmap String $ readProcess exe' args' ""
 
 -- Evaluation
-lookv :: Var -> Env -> Maybe Value
+lookv :: EvalContext m => Var -> Env m -> Maybe (RawValue m)
 lookv _ [] = Nothing
 lookv VZ (x:_) = Just x
 lookv (VS v) (_:xs) = lookv v xs
 
-evalPrint :: Expr -> IO ()
-evalPrint e = eval e >>= print
+evalIO :: Fex IO -> IO Value
+evalIO = eval
 
-eval :: Expr -> IO Value
+evalPure :: Fex Pure -> RawValue Pure
+evalPure = runIdentity . eval
+
+eval :: EvalContext m => Fex m -> m (RawValue m)
 eval = eval' []
 
-eval' :: Env -> Expr -> IO Value
+eval' :: EvalContext m => Env m -> Fex m -> m (RawValue m)
 eval' env = ev
-  where ev :: Expr -> IO Value
-        ev (Lit v) = return v
+  where ev (Lit v) = return v
         ev (Var v) = case lookv v env of
-                      Nothing  -> errf "Unbound variable '%s'" (show v)
-                      Just val -> return val
-        ev (Dep d) = dep d
+                       Nothing  -> errf "Unbound variable '%s'" (show v)
+                       Just val -> return val
+        ev (Dep d) = deval d ev
         ev (App f v) = do
           f' <- ev f
           v' <- ev v
@@ -62,14 +106,7 @@ eval' env = ev
             _ -> errf "Non-function value in LHS of app: %s" (show f')
         ev (Lam body) = return $ Closure $ \v -> eval' (v:env) body
 
-        dep :: Dependency -> IO Value
-        dep (ReadEnvVar e) = ev e >>= \e -> fmap String $ getEnv $ valueToStr e
-        dep (RunExe exe args) = do
-          exe' <- fmap valueToStr $ ev exe
-          args' <- fmap (map valueToStr) $ mapM ev args
-          fmap String $ readProcess exe' args' ""
-
-valueToStr :: Value -> String
+valueToStr :: RawValue m -> String
 valueToStr v = case v of
                  String s -> s
                  _ -> errf "Expected String; got %s" (show v)
@@ -79,13 +116,13 @@ errf s r = error $ printf s r
 
 
 -- Dependency analysis
-data DepTree = Node (Maybe Dependency) [DepTree]
+data DepTree = Node (Maybe (Dependency Pure)) [DepTree]
 
 depLeaf :: DepTree
 depLeaf = Node Nothing []
 
-depJoin :: [DepTree] -> DepTree
-depJoin = Node Nothing
+depJoin :: DepTree -> DepTree -> DepTree
+depJoin t1 t2 = Node Nothing [t1, t2]
 
 instance Show DepTree where
   show = show' 0
@@ -94,9 +131,9 @@ instance Show DepTree where
           show' depth (Node Nothing ts) =
             printf "%s%s" (dstr depth) (subdeps depth ts)
           show' depth (Node (Just d) []) =
-            printf "%s%s" (dstr depth) (show d)
+            printf "%s%s" (dstr depth) (showStatic d)
           show' depth (Node (Just d) ts) =
-            printf "%s%s\n%s%s" (dstr depth) (show d)
+            printf "%s%s\n%s%s" (dstr depth) (showDynamic d)
                                 (dstr depth) (subdeps (depth+1) ts)
           
           dstr :: Int -> String
@@ -110,57 +147,62 @@ depTidy (Node d ts) = Node d $ filter (not . isNil) $ map depTidy ts
   where isNil (Node Nothing []) = True
         isNil _ = False
 
-depTree :: Expr -> DepTree
-depTree = depTidy . depTree' allDeps
+depTree :: Fex Pure -> DepTree
+depTree = depTidy . depTree'
+  where depTree' :: Fex Pure -> DepTree
+        depTree' (Lit _) = depLeaf
+        depTree' (Var _) = depLeaf
+        depTree' (App f v) = depTree' f `depJoin` depTree' v
+        depTree' (Lam body) = depTree' body
+        depTree' (Dep d) = dt d
 
-depTree' :: (Dependency -> DepTree) -> Expr -> DepTree
-depTree' _ (Lit _) = depLeaf
-depTree' _ (Var _) = depLeaf
-depTree' dt (App f v) = depJoin [depTree' dt f, depTree' dt v]
-depTree' dt (Lam body) = depTree' dt body
-depTree' dt (Dep d) = dt d
+        dt :: Dependency Pure -> DepTree
+        dt d@(ReadEnvVar e) = Node (Just d) [depTree' e]
+        dt d@(RunExe exe args) = foldl depJoin exeDep argDeps
+          where exeDep = Node (Just d) [depTree' exe]
+                argDeps = map depTree' args
 
-allDeps :: Dependency -> DepTree
-allDeps d@(ReadEnvVar e) = Node (Just d) [depTree' allDeps e]
-allDeps d@(RunExe exe args) = depJoin $ Node (Just d) [exeDep]:argDeps
-  where exeDep = depTree' allDeps exe
-        argDeps = map (depTree' allDeps) args
-
-staticDeps :: Expr -> [Dependency]
+staticDeps :: Fex Pure -> [Dependency Pure]
 staticDeps = sdeps . depTree
   where sdeps (Node (Just d) []) = [d]
         sdeps (Node _ ts) = concatMap sdeps ts
 
--- Examples
-id' :: Expr
-id' = Lam (Var VZ)
+showDynamic :: Dependency Pure -> String
+showDynamic (ReadEnvVar _) = "ReadEnvVar"
+showDynamic (RunExe _ _) = "RunExe"
 
-test1 :: Expr
-test1 = App id' (Lit $ Bool True)
+showStatic :: Dependency Pure -> String
+showStatic (ReadEnvVar e) = printf "ReadEnvVar '%s'" $ show $ evalPure e
+showStatic (RunExe exe _) = printf "RunExe '%s'" $ show $ evalPure exe
 
-test2 :: Expr
-test2 = App id' (Lit $ Bool False)
+-- Combinators for constructing terms in the Fex language
 
-readEnv :: String -> Expr
-readEnv = Dep . ReadEnvVar . Lit . String
+bool :: Bool -> Fex m
+bool = Lit . Bool
 
-testBio :: Expr
-testBio = readEnv "BIO"
+int :: Int -> Fex m
+int = Lit . Int
 
-bioLs :: Expr
-bioLs = Dep $ RunExe (Lit $ String "ls") [readEnv "BIO"]
+double :: Double -> Fex m
+double = Lit . Double
 
-bioLs2 :: Expr
-bioLs2 = Dep $ RunExe (readEnv "GOROOT") [testBio]
+str :: String -> Fex m
+str = Lit . String
 
-main :: IO ()
-main = do
-  evalPrint test1
-  evalPrint test2
-  evalPrint id'
-  evalPrint testBio
-  evalPrint bioLs
-  print $ depTree bioLs
-  print $ staticDeps bioLs
-  print $ staticDeps bioLs2
+var :: Int -> Fex m
+var = Var . var'
+  where var' 0 = VZ
+        var' n = VS $ var' (n - 1)
+
+app :: Fex m -> Fex m -> Fex m
+app = App
+
+lam :: Fex m -> Fex m
+lam = Lam
+
+readEnvVar :: Fex m -> Fex m
+readEnvVar = Dep . ReadEnvVar
+
+runExe :: Fex m -> [Fex m] -> Fex m
+runExe exe args = Dep $ RunExe exe args
 
