@@ -25,6 +25,7 @@ library
                        Development.Fex.Depend
                        Development.FexG.Experiment
                        Development.FexH.Experiment
+                       Development.FexA.Experiment
   -- other-modules:       
   build-depends:       base == 4.6.*
                        , directory == 1.2.*
