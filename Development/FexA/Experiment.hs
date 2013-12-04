@@ -6,20 +6,25 @@ module Development.FexA.Experiment
     Fex
   , Value(..)
   , Dependency
+  , Flag(..)
 
   -- ** Introducing basic terms
-  , bool, int, double, str
+  , bool, int, double, str, pure
   , var, app, lam
 
+  -- ** Introducing flag terms
+  , flag
+
   -- ** Introducing dependency terms
-  , readEnvVar, runExe
+  , readEnvVar, runExe, file, dir
 
   -- * Evaluating a Fex term
   , EvalContext(..)
-  , eval, evalEnv, evalIO, evalIO', evalPure
+  , eval, evalEnv, evalIO, evalIO', evalPure, applyFlags
 
   -- * Dependency analysis
   , DepTree, depTree, staticDeps, showStatic
+  , depMissing, depStatus
   )
 where
 
@@ -27,7 +32,7 @@ import Control.Monad.Identity (Identity, runIdentity)
 import Data.Char (isSpace)
 import Data.List (dropWhileEnd, intercalate, nubBy)
 import Data.Maybe (fromMaybe, isJust)
-import System.Directory (findExecutable)
+import System.Directory (doesDirectoryExist, findExecutable, doesFileExist)
 import System.Environment (getEnv, lookupEnv)
 import System.Exit (exitFailure)
 import System.Process (readProcess)
@@ -41,7 +46,18 @@ data Fex = Lit Value
          | Flag Flag
          | App Fex Fex
          | Lam Fex
-         deriving Show
+         | Lift1 (Value -> Value) Fex
+         | Lift2 (Value -> Value -> Value) Fex Fex
+
+instance Show Fex where
+  show (Lit v) = "Lit " ++ show v
+  show (Var v) = "Var " ++ show v
+  show (Dep d) = "Dep " ++ show d
+  show (Flag f) = "Flag " ++ show f
+  show (App e1 e2) = "App " ++ show e1 ++ " " ++ show e2
+  show (Lam e) = "Lam " ++ show e
+  show (Lift1 _ e) = "Lift1 <closure> " ++ show e
+  show (Lift2 _ e1 e2) = "Lift2 <closure> " ++ show e1 ++ " " ++ show e2
 
 -- | De Bruijn indexing.
 data Var = VZ | VS Var deriving Show
@@ -51,24 +67,39 @@ data Value = Bool Bool
            | Int Int
            | Double Double
            | String String
-           deriving Eq
+           | Pure (Value -> Value)
+
+instance Eq Value where
+  (Bool b1) == (Bool b2) = b1 == b2
+  (Int n1) == (Int n2) = n1 == n2
+  (Double d1) == (Double d2) = d1 == d2
+  (String s1) == (String s2) = s1 == s2
+  _ == _ = False
 
 instance Show Value where
   show (Bool b) = show b
   show (Int n) = show n
   show (Double d) = show d
   show (String s) = s
+  show (Pure _) = "<closure>"
 
 -- | A closed representation of all available dependencies. It is not
 -- extensible.
 data Dependency = ReadEnvVar Fex
                 | RunExe Fex [Fex]
+                | File Fex
+                | Dir Fex
                 deriving Show
 
 -- | A representation of a command line flag. Only simple flags are
 -- available. Namely, bool, integer, double or string flags. Each flag
 -- must have a default value and optionally include a help message.
-
+data Flag = FBool   String String        -- ^ Name and help.
+                                         -- Default is always false.
+          | FInt    String Int String    -- ^ Name, default and help.
+          | FDouble String Double String -- ^ Name, default and help.
+          | FString String String String -- ^ Name, default and help.
+          deriving Show
 
 -- | An environment for holding Fex values.
 -- Note that this includes closures, which only exist as an intermediate form.
@@ -89,6 +120,12 @@ lookv v env = fromMaybe (errf "Unbound variable '%s'" (show v)) (lookv' v env)
         lookv' VZ (x:_) = Just x
         lookv' (VS v) (_:xs) = lookv' v xs
 
+-- | Replaces flag values specified on the command line with their
+-- corresponding `Flag` terms in the Fex term given. All other `Flag` terms
+-- are ignored (they will evaluate to default values).
+applyFlags :: [String] -> Fex -> Fex
+applyFlags _ = id
+
 -- | Just like `evalIO`, except it stops the program and outputs an error
 -- message if one occurs.
 evalIO' :: Fex -> IO Value
@@ -107,13 +144,6 @@ evalIO e = do
   if null missing
     then eval e >>= \v -> return $ Right v
     else return $ Left $ intercalate "\n" $ map depStatus missing
-
--- | Convert a static dependency and its status to a human readable string.
--- A run time error will occur if a dependency is not static.
-depStatus :: (Dependency, Maybe String) -> String
-depStatus (d, Nothing)  = showStatic d ++ " ... OK."
-depStatus (d, Just err) = showStatic d ++ " ... Not found!\n" ++ indent err
-  where indent = dropWhileEnd isSpace . unlines . map ("    " ++) . lines
 
 -- | Evaluate a Fex term as a pure computation. This results in a
 -- run time error if the Fex term uses any dependencies.
@@ -138,13 +168,32 @@ eval' env = ev
   where ev (Lit v) = return $ V v
         ev (Var v) = return $ lookv v env
         ev (Dep d) = deval d env >>= \v -> return $ V v
+        ev (Flag f) = return $ V $ feval f
         ev (App f v) = do
           f' <- ev f
           v' <- ev v
           case f' of
             Closure f'' -> f'' v'
+            V (Pure f'') -> return $ V $ f'' $ asValue v'
             _ -> errf "Non-function value in LHS of app: %s" (show f')
         ev (Lam body) = return $ Closure $ \v -> eval' (v:env) body
+        ev (Lift1 f e) = do
+          v <- ev e
+          return $ V $ f $ asValue v
+        ev (Lift2 f e e') = do
+          v <- ev e
+          v' <- ev e';
+          return $ V $ f (asValue v) (asValue v')
+
+        asValue (V v) = v
+        asValue _ = error "Expected value but got closure."
+
+        -- This always uses the default value.
+        feval :: Flag -> Value
+        feval (FBool   _ _)     = Bool False
+        feval (FInt    _ d _)    = Int d
+        feval (FDouble _ d _) = Double d
+        feval (FString _ d _) = String d
 
 -- | An evaluation context determines how certain terms (like dependencies)
 -- are evaluated. For example, in a pure computation, a dependency is not
@@ -166,17 +215,14 @@ instance EvalContext Identity where
 instance EvalContext IO where
   deval (ReadEnvVar e) env = do
     e' <- evalEnv env e
-    fmap String $ getEnv $ valueToStr e'
+    fmap String $ getEnv $ show e'
   deval (RunExe exe args) env = do
-    exe' <- fmap valueToStr $ evalEnv env exe
-    args' <- fmap (map valueToStr) $ mapM (evalEnv env) args
+    exe' <- fmap show $ evalEnv env exe
+    args' <- fmap (map show) $ mapM (evalEnv env) args
     fmap String $ readProcess exe' args' ""
-
-valueToStr :: Value -> String
-valueToStr v = case v of
-                 String s -> s
-                 _ -> errf "Expected String; got %s" (show v)
-
+  deval (File path) env = evalEnv env path
+  deval (Dir path) env = evalEnv env path
+    
 errf :: PrintfArg r => String -> r -> a
 errf s r = error $ printf s r
 
@@ -250,15 +296,20 @@ depTree = depTidy . depTree'
   where depTree' :: Fex -> DepTree
         depTree' (Lit _) = depLeaf
         depTree' (Var _) = depLeaf
+        depTree' (Flag _) = depLeaf
         depTree' (App f v) = depTree' f `depJoin` depTree' v
         depTree' (Lam body) = depTree' body
         depTree' (Dep d) = dt d
+        depTree' (Lift1 _ e) = depTree' e
+        depTree' (Lift2 _ e1 e2) = depTree' e1 `depJoin` depTree' e2
 
         dt :: Dependency -> DepTree
         dt d@(ReadEnvVar e) = Node (Just d) [depTree' e]
         dt d@(RunExe exe args) = foldl depJoin exeDep argDeps
           where exeDep = Node (Just d) [depTree' exe]
                 argDeps = map depTree' args
+        dt d@(File path) = Node (Just d) [depTree' path]
+        dt d@(Dir path) = Node (Just d) [depTree' path]
 
 -- | Returns a list of all static dependencies in a Fex term. Duplicates are
 -- excluded.
@@ -270,34 +321,57 @@ staticDeps = nubBy staticDepEq . sdeps . depTree
 staticDepEq :: Dependency -> Dependency -> Bool
 staticDepEq (ReadEnvVar e1) (ReadEnvVar e2) = evalPure e1 == evalPure e2
 staticDepEq (RunExe e1 _) (RunExe e2 _) = evalPure e1 == evalPure e2
+staticDepEq (File e1) (File e2) = evalPure e1 == evalPure e2
+staticDepEq (Dir e1) (Dir e2) = evalPure e1 == evalPure e2
 staticDepEq _ _ = False
 
 showDynamic :: Dependency -> String
 showDynamic (ReadEnvVar _) = "ReadEnvVar"
 showDynamic (RunExe _ _) = "RunExe"
+showDynamic (File _) = "File"
+showDynamic (Dir _) = "Dir"
 
 -- | Returns a string representation of a static dependency.
 -- A run time error will occur if given a dynamic dependency.
 showStatic :: Dependency -> String
 showStatic (ReadEnvVar e) = printf "ReadEnvVar '%s'" $ show $ evalPure e
 showStatic (RunExe exe _) = printf "RunExe '%s'" $ show $ evalPure exe
+showStatic (File path) = printf "File '%s'" $ show $ evalPure path
+showStatic (Dir path) = printf "Dir '%s'" $ show $ evalPure path
 
 -- | If a dependency is not present, a string is returned explaining why.
 -- This can be used on dynamic and static dependencies, but if a dynamic
 -- dependency is used, all sub-dependencies are evaluated.
 depMissing :: Dependency -> IO (Maybe String)
 depMissing (ReadEnvVar e) = do
-  name <- fmap valueToStr $ eval e
+  name <- fmap show $ eval e
   exists <- lookupEnv name
   return $ case exists of
     Nothing -> Just $ printf "Environment variable '%s' is not defined." name
     _       -> Nothing
 depMissing (RunExe exe _) = do
-  cmd <- fmap valueToStr $ eval exe
+  cmd <- fmap show $ eval exe
   exists <- findExecutable cmd
   return $ case exists of
     Nothing -> Just $ printf "Could not find executable '%s'." cmd
     _       -> Nothing
+depMissing (File path) = do
+  path' <- fmap show $ eval path
+  exists <- doesFileExist path'
+  return $ if exists then Nothing else
+    Just $ printf "Path '%s' does not exist or is not a file." path'
+depMissing (Dir path) = do
+  path' <- fmap show $ eval path
+  exists <- doesDirectoryExist path'
+  return $ if exists then Nothing else
+    Just $ printf "Path '%s' does not exist or is not a directory." path'
+
+-- | Convert a static dependency and its status to a human readable string.
+-- A run time error will occur if a dependency is not static.
+depStatus :: (Dependency, Maybe String) -> String
+depStatus (d, Nothing)  = showStatic d ++ " ... OK."
+depStatus (d, Just err) = showStatic d ++ " ... Not found!\n" ++ indent err
+  where indent = dropWhileEnd isSpace . unlines . map ("    " ++) . lines
 
 -- | Introduce a bool Fex term.
 bool :: Bool -> Fex
@@ -314,6 +388,10 @@ double = Lit . Double
 -- | Introduce a string Fex term.
 str :: String -> Fex
 str = Lit . String
+
+-- | Introduce a pure computation over Fex values.
+pure :: (Value -> Value) -> Fex
+pure = Lit . Pure
 
 -- | Introduce a lambda bound variable Fex term.
 -- Note that this uses de Bruijn indexing. In particular, a variable is
@@ -368,4 +446,25 @@ runExe :: Fex -- ^ The name or path to an executable.
        -> [Fex] -- ^ A list of command line arguments, which must be Fex strings.
        -> Fex -- ^ The output of the process as a string.
 runExe exe args = Dep $ RunExe exe args
+
+-- | Establishes a dependency on the existence of a /file/. If the file does
+-- not exist, then the dependency is not satisfied. Note that this expression
+-- is executed for side effect; the same path given is returned unaltered.
+file :: Fex -- ^ Path to a file.
+     -> Fex -- ^ The same path given, unaltered.
+file = Dep . File
+
+-- | Establishes a dependency on the existence of a /directory/. If the
+-- directory does not exist, then the dependency is not satisfied. Note that
+-- this expression is executed for side effect; the same path given is
+-- returned unaltered.
+dir :: Fex -- ^ Path to a dir.
+    -> Fex -- ^ The same path given, unaltered.
+dir = Dep . Dir
+
+-- | Introduce a `Flag` term. `Flag` terms always evaluate to bools, integers,
+-- doubles or strings and are guaranteed to be consistent with the supplied
+-- default value.
+flag :: Flag -> Fex
+flag = Flag
 
