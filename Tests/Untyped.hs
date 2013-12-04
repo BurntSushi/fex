@@ -3,31 +3,31 @@ module Tests.Untyped where
 import Development.FexA.Experiment
 
 -- Examples
-id' :: Fex m
-id' = lam $ var 0
+id' :: Fex
+id' = lam $ var 1
 
-test1 :: Fex m
+test1 :: Fex
 test1 = app id' $ bool True
 
-test2 :: Fex m
+test2 :: Fex
 test2 = app id' $ bool False
 
-testBio :: Fex m
+testBio :: Fex
 testBio = readEnvVar $ str "BIO"
 
-bioLs :: Fex m
+bioLs :: Fex
 bioLs = runExe (str "ls") [testBio]
 
-bioLs2 :: Fex m
+bioLs2 :: Fex
 bioLs2 = runExe (readEnvVar $ str "GOROOT") [testBio]
 
 main :: IO ()
 main = do
-  evalIO test1 >>= print
+  evalIO' test1 >>= print
   -- evalPrint test2
   -- evalPrint id'
   -- evalPrint testBio
-  -- evalPrint bioLs
+  evalIO' bioLs >>= print
   -- print $ depTree bioLs
   -- print $ depTree bioLs
   -- putStrLn ""
