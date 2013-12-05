@@ -1,15 +1,18 @@
 module Main where
 
 import Data.List (intercalate)
-import System.FilePath (joinPath)
+import System.FilePath (combine)
 
 import Development.FexA.Experiment
 
+lift2Str :: (String -> String -> String) -> Fex
+lift2Str f = lit $ Pure (\s1 -> Pure (String . f (show s1) . show))
+
 cat :: Fex
-cat = pure (\s1 -> Pure (\s2 -> String $ show s1 ++ show s2))
+cat = lift2Str (++)
 
 pjoin :: Fex
-pjoin = pure (\s1 -> Pure (\s2 -> String $ joinPath [show s1, show s2]))
+pjoin = lift2Str combine
 
 cutTree :: Fex
 cutTree =
@@ -22,14 +25,14 @@ cutTree =
       resDir    = dir $ flag $ FString "results" "/tmp/fex/mattbench"
                                        "Directory to store results."
       outf      = cat `app` (pjoin `app` resDir `app` threshold) `app` str ".csv"
-      args      = [str "-threshold", threshold, dists, tree, outf]
-   in runExe (str "mattbench-cluster") args
+      args      = list [str "-threshold", threshold, dists, tree, outf]
+   in runExe (str "mattbench-cluster") `app` args
 
 main :: IO ()
-main = do
-  let deps = staticDeps cutTree
-  stats <- fmap (zip deps) $ mapM depMissing deps
-  putStrLn $ intercalate "\n" $ map depStatus stats
+-- main = do 
+  -- let deps = staticDeps cutTree 
+  -- stats <- fmap (zip deps) $ mapM depMissing deps 
+  -- putStrLn $ intercalate "\n" $ map depStatus stats 
 -- main = print $ depTree cutTree 
--- main = evalIO' cutTree >>= print 
+main = evalIO' cutTree >>= print
 
