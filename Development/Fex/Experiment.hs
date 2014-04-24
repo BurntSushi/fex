@@ -11,7 +11,8 @@ module Development.Fex.Experiment
   )
 where
 
-import Control.Monad (liftM)
+import Control.Applicative (Applicative, pure, (<*>))
+import Control.Monad (liftM, ap)
 import Control.Monad.IO.Class (MonadIO(..))
 import Data.Char (isSpace)
 import Data.List (dropWhileEnd, intercalate, nub)
@@ -42,6 +43,10 @@ instance Monad Experiment where
 
 instance Functor Experiment where
   fmap = liftM
+
+instance Applicative Experiment where
+  pure = return
+  e1 <*> e2 = ap e1 e2
 
 instance MonadIO Experiment where
   -- When the context of an experiment does not include evaluation,

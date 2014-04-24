@@ -27,10 +27,10 @@ library
                        Development.FexH.Experiment
                        Development.FexA.Experiment
   -- other-modules:       
-  build-depends:       base == 4.6.*
+  build-depends:       base == 4.7.*
                        , directory == 1.2.*
                        , filepath == 1.3.*
                        , transformers == 0.3.0.*
                        , containers == 0.5.*
-                       , process == 1.1.0.*
+                       , process == 1.2.0.*
                        , mtl == 2.1.*

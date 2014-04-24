@@ -142,7 +142,7 @@ toOptSpec = map convert . M.elems
 usageExit :: Flags -> IO a
 usageExit flags = usage flags >> exitFailure
 
-usage :: Flags -> IO a
+usage :: Flags -> IO ()
 usage flags = ef "%s\n" $ O.usageInfo "Usage: fex [flags]" $ toOptSpec flags
 
 ef :: HPrintfType r => String -> r

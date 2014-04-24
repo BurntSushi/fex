@@ -12,7 +12,7 @@ module Development.FexA.Experiment
   , lit, var, app, lam, list
 
   -- ** Introducing values
-  , bool, int, double, str, pure
+  , bool, int, double, str, pureLam
 
   -- ** Introducing flag terms
   , flag
@@ -32,7 +32,7 @@ where
 
 import Control.Monad.Identity (Identity, runIdentity)
 import Data.Char (isSpace)
-import Data.List (dropWhileEnd, intercalate, nubBy)
+import Data.List (dropWhileEnd, intercalate, nub)
 import Data.Maybe (fromMaybe, isJust)
 import System.Directory (doesDirectoryExist, findExecutable, doesFileExist)
 import System.Environment (getEnv, lookupEnv)
@@ -44,11 +44,11 @@ import Text.Printf (PrintfArg, printf)
 -- representation for terms corresponding to dependencies.
 data Fex = Lit Value
          | Var Var
-         | Dep Dependency
-         | Flag Flag
+         | List [Fex]
          | App Fex Fex
          | Lam Fex
-         | List [Fex]
+         | Dep Dependency
+         | Flag Flag
 
 instance Show Fex where
   show (Lit v) = "Lit " ++ show v
@@ -62,7 +62,8 @@ instance Show Fex where
 -- | De Bruijn indexing.
 data Var = VZ | VS Var deriving Show
 
--- | The only values in Fex are integers, doubles, bools and strings.
+-- | The only values in Fex are integers, doubles, bools, strings, lists
+-- and pure functions.
 data Value = Bool Bool
            | Int Int
            | Double Double
@@ -221,10 +222,6 @@ instance EvalContext IO where
     return $ Closure $ \args -> do
       let args' = map show $ asList $ asValue args
       fmap (V . String) $ readProcess exe' args' ""
-  -- deval (RunExe exe args) env = do 
-    -- exe' <- fmap show $ evalEnv env exe 
-    -- args' <- fmap (map show) $ mapM (evalEnv env) args 
-    -- fmap String $ readProcess exe' args' "" 
   deval (File path) ev = ev path
   deval (Dir path) ev = ev path
 
@@ -277,11 +274,11 @@ depTree = depTidy . depTree'
   where depTree' :: Fex -> DepTree
         depTree' (Lit _) = depLeaf
         depTree' (Var _) = depLeaf
-        depTree' (Flag _) = depLeaf
+        depTree' (List es) = foldl depJoin depLeaf $ map depTree' es
         depTree' (App f v) = depTree' f `depJoin` depTree' v
         depTree' (Lam body) = depTree' body
         depTree' (Dep d) = dt d
-        depTree' (List es) = foldl depJoin depLeaf $ map depTree' es
+        depTree' (Flag _) = depLeaf
 
         dt :: Dependency -> DepTree
         dt d@(ReadEnvVar e) = Node (Just d) [depTree' e]
@@ -292,16 +289,16 @@ depTree = depTidy . depTree'
 -- | Returns a list of all static dependencies in a Fex term. Duplicates are
 -- excluded.
 staticDeps :: Fex -> [Dependency]
-staticDeps = nubBy staticDepEq . sdeps . depTree
+staticDeps = nub . sdeps . depTree
   where sdeps (Node (Just d) []) = [d]
         sdeps (Node _ ts) = concatMap sdeps ts
 
-staticDepEq :: Dependency -> Dependency -> Bool
-staticDepEq (ReadEnvVar e1) (ReadEnvVar e2) = evalPure e1 == evalPure e2
-staticDepEq (RunExe e1) (RunExe e2) = evalPure e1 == evalPure e2
-staticDepEq (File e1) (File e2) = evalPure e1 == evalPure e2
-staticDepEq (Dir e1) (Dir e2) = evalPure e1 == evalPure e2
-staticDepEq _ _ = False
+instance Eq Dependency where
+  (ReadEnvVar e1) == (ReadEnvVar e2) = evalPure e1 == evalPure e2
+  (RunExe e1) == (RunExe e2) = evalPure e1 == evalPure e2
+  (File e1) == (File e2) = evalPure e1 == evalPure e2
+  (Dir e1) == (Dir e2) = evalPure e1 == evalPure e2
+  _ == _ = False
 
 showDynamic :: Dependency -> String
 showDynamic (ReadEnvVar _) = "ReadEnvVar"
@@ -368,8 +365,8 @@ str :: String -> Fex
 str = Lit . String
 
 -- | Introduce a pure computation over Fex values.
-pure :: (Value -> Value) -> Fex
-pure = Lit . Pure
+pureLam :: (Value -> Value) -> Fex
+pureLam = Lit . Pure
 
 -- | Introduce a literal Fex term.
 lit :: Value -> Fex

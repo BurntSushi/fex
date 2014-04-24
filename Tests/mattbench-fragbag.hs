@@ -6,7 +6,7 @@ import System.FilePath (combine)
 import Development.FexA.Experiment
 
 lift2Str :: (String -> String -> String) -> Fex
-lift2Str f = lit $ Pure (\s1 -> Pure (String . f (show s1) . show))
+lift2Str f = pureLam (\s1 -> Pure (String . f (show s1) . show))
 
 cat :: Fex
 cat = lift2Str (++)
@@ -29,10 +29,10 @@ cutTree =
    in runExe (str "mattbench-cluster") `app` args
 
 main :: IO ()
--- main = do 
-  -- let deps = staticDeps cutTree 
-  -- stats <- fmap (zip deps) $ mapM depMissing deps 
-  -- putStrLn $ intercalate "\n" $ map depStatus stats 
+main = do
+  let deps = staticDeps cutTree
+  stats <- fmap (zip deps) $ mapM depMissing deps
+  putStrLn $ intercalate "\n" $ map depStatus stats
 -- main = print $ depTree cutTree 
-main = evalIO' cutTree >>= print
+-- main = evalIO' cutTree >>= print 
 
